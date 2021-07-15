@@ -21,6 +21,9 @@ class Template(object):
         self.valid = False
         self.default_env_values = values.get('default-values', {})
 
+    def __str__(self) -> str:
+        return f"Template for {self.service_type}"
+
     def get_default_env_values(self):
         return self.default_env_values
 
@@ -46,14 +49,14 @@ class Template(object):
 
     def _validate_template_dir(self, err_on_failure_to_locate=True):
         if not os.path.exists(self.get_template_file_path()):
-            if err_on_failure_to_locate: print_utility.error("Template file could not be "
-                                                             "located for service - {service_type}".format(
-                service_type=self.service_type), raise_exception=True)
+            if err_on_failure_to_locate: print_utility.error(f"Template file could not be located for service - "
+                                                             f"{self.service_type} - {self.__str__()}",
+                                                             raise_exception=True)
             return
         if not os.path.exists(self.get_parameter_file_path()):
-            if err_on_failure_to_locate: print_utility.error("Parameter file could not be "
-                                                             "located for service - {service_type}".format(
-                service_type=self.service_type), raise_exception=True)
+            if err_on_failure_to_locate: print_utility.error(f"Parameter file could not be located for service  - "
+                                                             f"{self.service_type} - {self.__str__()}",
+                                                             raise_exception=True)
             return
         self.valid = True
 
@@ -81,9 +84,14 @@ class URLTemplate(Template):
 
     def download_template(self):
         self._prep_download()
-        r = requests.get(self.download_url, stream=True)
+        URLTemplate.download_url_to_destination(self.download_url, self.destination)
+        self._validate_template_dir()
+
+    @staticmethod
+    def download_url_to_destination(url, destination):
+        r = requests.get(url, stream=True)
         if r.status_code != 200:
-            print_utility.error("Template could not be downloaded - {url} {status} {body}".format(url=self.download_url,
+            print_utility.error("Template could not be downloaded - {url} {status} {body}".format(url=url,
                                                                                                   status=r.status_code,
                                                                                                   body=r.text))
         temporary_file = tempfile.NamedTemporaryFile()
@@ -92,8 +100,7 @@ class URLTemplate(Template):
                 temporary_file.write(chunk)
         temporary_file.seek(0)
         with ZipFile(temporary_file) as zf:
-            zf.extractall(self.destination)
-        self._validate_template_dir()
+            zf.extractall(destination)
 
 
 class AliasTemplate(Template):
@@ -102,6 +109,9 @@ class AliasTemplate(Template):
         super(AliasTemplate, self).__init__(service_type, values=values)
         self.lookup = values.get('lookup', None)
         self.delegate = None
+
+    def __str__(self) -> str:
+        return f"{super().__str__()}: Alias {self.lookup} - {self.delegate}"
 
     def resolve(self, templates):
         # type: (dict()) -> None
@@ -139,6 +149,12 @@ class AliasTemplate(Template):
         values.update(self.default_env_values)
         return values
 
+    def get_root_service_type(self):
+        if isinstance(self.delegate, AliasTemplate):
+            return self.delegate.get_root_service_type()
+        else:
+            return self.delegate.service_type
+
 
 class GitHubTemplate(URLTemplate):
     def __init__(self, service_type, values):
@@ -150,6 +166,18 @@ class GitHubTemplate(URLTemplate):
         else:
             self._set_download_relative_path("{repo}-{tag}".format(tag=tag, **values))
 
+    def __str__(self) -> str:
+        return f"{super().__str__()}: GitHub {self.download_url}"
+
+
+class GitHubTemplateDefinitionLocation(GitHubTemplate):
+
+    def _validate_template_dir(self, err_on_failure_to_locate=True):
+        if not os.path.exists(self.get_defaults_file_path()):
+            if err_on_failure_to_locate: print_utility.error("Remote Defaults file could not be "
+                                                             "located for service - {service_type}".format(
+                service_type=self.service_type), raise_exception=True)
+
 
 class NamedLocalTemplate(Template):
     def __init__(self, directory, service_type="local-template", err_on_failure_to_locate=True,
@@ -157,6 +185,9 @@ class NamedLocalTemplate(Template):
         super(NamedLocalTemplate, self).__init__(service_type, values={}, template_name=template_name)
         self.destination = directory
         self._validate_template_dir(err_on_failure_to_locate=err_on_failure_to_locate)
+
+    def __str__(self) -> str:
+        return f"{super().__str__()}: NamedLocalTemplate {self.destination}"
 
 
 class S3Template(Template):
@@ -168,6 +199,9 @@ class S3Template(Template):
         self._prep_download()
         s3.download_zip_from_s3_url(self.s3_location, self.destination)
 
+    def __str__(self) -> str:
+        return f"{super().__str__()}: S3Template {self.s3_location}"
+
 
 class LocalTemplate(Template):
     def __init__(self, template, parameter_file, config_dir=None):
@@ -175,6 +209,9 @@ class LocalTemplate(Template):
         self.config_dir = config_dir
         self.parameter_file = parameter_file
         self.template = template
+
+    def __str__(self) -> str:
+        return f"{super().__str__()}: LocalTemplate {self.template}"
 
     def get_parameter_file_path(self):
         return self.parameter_file
